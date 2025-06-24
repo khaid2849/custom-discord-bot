@@ -152,6 +152,11 @@ async def announce_slash(interaction: discord.Interaction, message: str, channel
 # Load cogs (command groups)
 async def load_extensions():
     """Load all cogs from the cogs directory"""
+    # Create cogs directory if it doesn't exist
+    if not os.path.exists('./cogs'):
+        os.makedirs('./cogs')
+        print('Created cogs directory')
+    
     for filename in os.listdir('./cogs'):
         if filename.endswith('.py') and not filename.startswith('_'):
             try:

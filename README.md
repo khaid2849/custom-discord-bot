@@ -5,6 +5,7 @@ A simple Discord bot built with discord.py that can make announcements and perfo
 ## Features
 
 - **Announcement System**: Make announcements with formatted embeds
+- **Music Player**: Play music from YouTube with queue system
 - **Basic Commands**: Ping, echo, server info, user info
 - **Utility Commands**: Roll dice, create polls, clear messages
 - **Slash Commands**: Modern Discord slash command support
@@ -15,6 +16,7 @@ A simple Discord bot built with discord.py that can make announcements and perfo
 - Python 3.8 or higher
 - Discord account
 - Discord server where you have admin permissions
+- FFmpeg (for music functionality)
 
 ## Installation
 
@@ -68,6 +70,19 @@ python bot.py
 - `!clear <amount>` - Clear messages (requires permissions)
 - `!help` - Show all commands
 
+### Music Commands (prefix: `!`)
+
+- `!play <song/URL>` - Play music from YouTube
+- `!pause` - Pause current song
+- `!resume` - Resume playback
+- `!skip` - Skip current song
+- `!stop` - Stop music and clear queue
+- `!queue` - Show music queue
+- `!nowplaying` - Show current song
+- `!volume <0-100>` - Set volume
+- `!join` - Join voice channel
+- `!leave` - Leave voice channel
+
 ### Slash Commands
 
 - `/hello` - Say hello
@@ -105,6 +120,8 @@ discord-bot/
 - **Bot not responding**: Check if MESSAGE_CONTENT intent is enabled
 - **Slash commands not showing**: Wait a few minutes or restart Discord
 - **Permission errors**: Ensure bot has proper permissions in the server
+- **No audio when playing music**: Ensure FFmpeg is installed and in PATH
+- **Music commands not working**: Install with `pip install discord.py[voice]`
 
 ## License
 

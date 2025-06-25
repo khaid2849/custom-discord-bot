@@ -17,19 +17,15 @@ class General(commands.Cog):
     @commands.command(name='userinfo', help='Get information about a user')
     async def userinfo(self, ctx, member: discord.Member = None):
         """Shows information about a user"""
-        # If no member specified, use the command author
         member = member or ctx.author
         
-        # Create embed
         embed = discord.Embed(
             title=f"User Info - {member.name}",
             color=member.color if member.color != discord.Color.default() else discord.Color.blue()
         )
         
-        # Set thumbnail to user avatar
         embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
         
-        # Add fields
         embed.add_field(name="Username", value=f"{member.name}#{member.discriminator}", inline=True)
         embed.add_field(name="ID", value=member.id, inline=True)
         embed.add_field(name="Nickname", value=member.nick or "None", inline=True)
@@ -39,12 +35,10 @@ class General(commands.Cog):
         embed.add_field(name="Joined Server", value=member.joined_at.strftime("%Y-%m-%d %H:%M:%S"), inline=False)
         embed.add_field(name="Account Created", value=member.created_at.strftime("%Y-%m-%d %H:%M:%S"), inline=False)
         
-        # Add roles
-        roles = [role.mention for role in member.roles[1:]]  # Exclude @everyone
+        roles = [role.mention for role in member.roles[1:]]
         if roles:
-            embed.add_field(name=f"Roles ({len(roles)})", value=" ".join(roles[:20]), inline=False)  # Limit to 20 roles
+            embed.add_field(name=f"Roles ({len(roles)})", value=" ".join(roles[:20]), inline=False)
         
-        # Set footer
         embed.set_footer(text=f"Requested by {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
         embed.timestamp = datetime.utcnow()
         
@@ -108,9 +102,8 @@ class General(commands.Cog):
             await ctx.send('❌ Please provide a number between 1 and 100')
             return
         
-        deleted = await ctx.channel.purge(limit=amount + 1)  # +1 to include the command message
+        deleted = await ctx.channel.purge(limit=amount + 1)
         
-        # Send confirmation and delete it after 5 seconds
         msg = await ctx.send(f'✅ Deleted {len(deleted) - 1} messages')
         await msg.delete(delay=5)
     
@@ -127,14 +120,11 @@ class General(commands.Cog):
         )
         embed.set_footer(text=f"Poll by {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
         
-        # Send the poll
         poll_msg = await ctx.send(embed=embed)
         
-        # Add reactions
-        await poll_msg.add_reaction('✅')  # Yes
-        await poll_msg.add_reaction('❌')  # No
+        await poll_msg.add_reaction('✅')
+        await poll_msg.add_reaction('❌')
         
-        # Delete the command message
         await ctx.message.delete()
     
     @commands.command(name='avatar', help='Get user avatar')
@@ -151,6 +141,5 @@ class General(commands.Cog):
         
         await ctx.send(embed=embed)
 
-# Setup function to add the cog to the bot
 async def setup(bot):
     await bot.add_cog(General(bot))

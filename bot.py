@@ -1,31 +1,27 @@
 import discord
-from discord.ext import commands
 import os
-from dotenv import load_dotenv
 import asyncio
+
+from discord.ext import commands
+from dotenv import load_dotenv
 from config import Config
 from logger import get_logger, log_command, log_bot
 
-# Load environment variables
 load_dotenv()
 
-# Setup logging
 logger = get_logger("Main")
 
-# Bot configuration
 intents = discord.Intents.default()
-intents.message_content = True  # Enable message content intent
+intents.message_content = True
 intents.guilds = True
 intents.guild_messages = True
 
-# Create bot instance
 bot = commands.Bot(
     command_prefix=Config.COMMAND_PREFIX,
     intents=intents,
     help_command=commands.DefaultHelpCommand()
 )
 
-# Event: Bot is ready
 @bot.event
 async def on_ready():
     """Called when the bot is ready and connected to Discord"""
@@ -33,7 +29,6 @@ async def on_ready():
     logger.info(f'Bot ID: {bot.user.id}')
     logger.info(f'Guild Count: {len(bot.guilds)}')
     
-    # Log guild information
     for guild in bot.guilds:
         logger.info(f'Connected to guild: {guild.name} (ID: {guild.id}) with {guild.member_count} members')
     
@@ -42,7 +37,6 @@ async def on_ready():
     print(f'Guild Count: {len(bot.guilds)}')
     print('------')
     
-    # Set bot status
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.listening,
@@ -50,7 +44,6 @@ async def on_ready():
         )
     )
     
-    # Sync slash commands
     try:
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} slash command(s)")
@@ -66,7 +59,6 @@ async def on_ready():
         "synced_commands": len(synced) if 'synced' in locals() else 0
     })
 
-# Event: Error handler
 @bot.event
 async def on_command_error(ctx, error):
     """Global error handler for commands"""
@@ -85,13 +77,11 @@ async def on_command_error(ctx, error):
         await ctx.send(f"❌ An error occurred: {str(error)}")
         logger.error(f"Unhandled error: {error}", exc_info=True)
 
-# Event: Command completion logging
 @bot.event
 async def on_command_completion(ctx):
     """Log successful command completion"""
     log_command(ctx, ctx.command.name, success=True)
 
-# Event: Guild join/leave logging
 @bot.event
 async def on_guild_join(guild):
     """Log when bot joins a guild"""
@@ -111,7 +101,6 @@ async def on_guild_remove(guild):
         "guild_id": guild.id
     })
 
-# Basic Commands
 @bot.command(name='announce', help='Make the bot announce a message')
 async def announce(ctx, *, message: str):
     """
@@ -120,10 +109,8 @@ async def announce(ctx, *, message: str):
     """
     logger.info(f"Announcement command used by {ctx.author} in {ctx.guild}")
     
-    # Delete the command message (optional)
     await ctx.message.delete()
     
-    # Create an embed for better formatting
     embed = discord.Embed(
         title="📢 Announcement",
         description=message,
@@ -167,7 +154,6 @@ async def serverinfo(ctx):
     
     await ctx.send(embed=embed)
 
-# Slash Commands
 @bot.tree.command(name='hello', description='Say hello to the bot')
 async def hello(interaction: discord.Interaction):
     """Simple slash command example"""
@@ -185,15 +171,12 @@ async def announce_slash(interaction: discord.Interaction, message: str, channel
     """Advanced slash command for announcements"""
     logger.info(f"Slash announcement by {interaction.user} in {interaction.guild}")
     
-    # Use the current channel if no channel is specified
     target_channel = channel or interaction.channel
     
-    # Check if bot has permissions to send messages in the target channel
     if not target_channel.permissions_for(interaction.guild.me).send_messages:
         await interaction.response.send_message("❌ I don't have permission to send messages in that channel!", ephemeral=True)
         return
     
-    # Create announcement embed
     embed = discord.Embed(
         title="📢 Announcement",
         description=message,
@@ -202,16 +185,12 @@ async def announce_slash(interaction: discord.Interaction, message: str, channel
     )
     embed.set_footer(text=f"Announced by {interaction.user.name}", icon_url=interaction.user.avatar.url if interaction.user.avatar else None)
     
-    # Send to target channel
     await target_channel.send(embed=embed)
     
-    # Confirm to the user
     await interaction.response.send_message(f"✅ Announcement sent to {target_channel.mention}!", ephemeral=True)
 
-# Load cogs (command groups)
 async def load_extensions():
     """Load all cogs from the cogs directory"""
-    # Create cogs directory if it doesn't exist
     if not os.path.exists('./cogs'):
         os.makedirs('./cogs')
         logger.info('Created cogs directory')
@@ -227,7 +206,6 @@ async def load_extensions():
                 logger.error(f'Failed to load cog {filename[:-3]}: {e}')
                 print(f'Failed to load cog {filename[:-3]}: {e}')
 
-# Logging command for admins
 @bot.command(name='logs', help='Get recent log information (Admin only)')
 @commands.has_permissions(administrator=True)
 async def logs(ctx, lines: int = 10):
@@ -249,7 +227,6 @@ async def logs(ctx, lines: int = 10):
     except Exception as e:
         await ctx.send(f"❌ Error reading logs: {e}")
 
-# Main function
 async def main():
     """Main function to run the bot"""
     logger.info("Starting Discord bot...")
@@ -264,7 +241,6 @@ async def main():
             log_bot("bot_start_failed", {"error": str(e)})
             raise
 
-# Run the bot
 if __name__ == '__main__':
     try:
         asyncio.run(main())

@@ -6,7 +6,6 @@ import re
 from discord.ext import commands
 from logger import get_logger, log_music, log_voice
 
-# YouTube DL options
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -18,7 +17,7 @@ ytdl_format_options = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0',  # bind to ipv4 since ipv6 addresses cause issues sometimes
+    'source_address': '0.0.0.0',
 }
 
 ffmpeg_options = {
@@ -28,7 +27,6 @@ ffmpeg_options = {
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
-# Setup logger for this module
 logger = get_logger("Music")
 
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -45,21 +43,34 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
         loop = loop or asyncio.get_event_loop()
-        logger.debug(f"Extracting info for URL: {url}")
         
         try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-            logger.debug(f"Successfully extracted info for: {data.get('title', 'Unknown')}")
+            
+            if 'entries' in data:
+                data = data['entries'][0]
+
+            filename = data['url'] if stream else ytdl.prepare_filename(data)
+            
+            source = cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+            
+            asyncio.create_task(cls._log_extraction_success(data.get('title', 'Unknown')))
+            
+            return source
+            
         except Exception as e:
-            logger.error(f"Failed to extract info for URL {url}: {e}")
+            asyncio.create_task(cls._log_extraction_error(url, str(e)))
             raise
 
-        if 'entries' in data:
-            # take first item from a playlist
-            data = data['entries'][0]
+    @staticmethod
+    async def _log_extraction_success(title):
+        """Async logging for successful extraction"""
+        logger.debug(f"Successfully extracted and created source for: {title}")
 
-        filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+    @staticmethod
+    async def _log_extraction_error(url, error):
+        """Async logging for extraction errors"""
+        logger.error(f"Failed to extract info for URL {url}: {error}")
 
 class Music(commands.Cog):
     """Music commands for the bot"""
@@ -67,7 +78,7 @@ class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.voice_clients = {}
-        self.music_queues = {}  # Guild ID -> List of songs
+        self.music_queues = {}
         logger.info("Music cog initialized")
         
     def get_queue(self, ctx):
@@ -79,42 +90,45 @@ class Music(commands.Cog):
     async def play_next(self, ctx):
         """Play the next song in the queue"""
         queue = self.get_queue(ctx)
-        logger.debug(f"Playing next song. Queue length: {len(queue)}")
         
         if len(queue) > 0:
-            # Get the next song
             next_song = queue.pop(0)
-            logger.info(f"Playing next song: {next_song['title']} in {ctx.guild.name}")
             
-            # Create player and play
             try:
                 player = await YTDLSource.from_url(next_song['url'], loop=self.bot.loop, stream=True)
                 ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(
                     self.play_next(ctx), self.bot.loop
                 ))
                 
-                # Log music activity
-                log_music(ctx, "play_next", next_song)
+                asyncio.create_task(self._log_and_announce_next(ctx, next_song, player))
                 
-                # Send now playing message
-                embed = discord.Embed(
-                    title="🎵 Now Playing",
-                    description=f"[{player.title}]({next_song['url']})",
-                    color=discord.Color.green()
-                )
-                if player.thumbnail:
-                    embed.set_thumbnail(url=player.thumbnail)
-                embed.add_field(name="Duration", value=self.format_duration(player.duration), inline=True)
-                embed.add_field(name="Requested by", value=next_song['requester'].mention, inline=True)
-                
-                await ctx.send(embed=embed)
             except Exception as e:
-                logger.error(f"Error playing next song: {e}")
-                log_music(ctx, "play_next_error", next_song, error=e)
+                asyncio.create_task(self._log_play_error(ctx, next_song, str(e)))
                 await ctx.send(f"❌ Error playing song: {str(e)}")
                 await self.play_next(ctx)  # Try next song
-        else:
-            logger.debug(f"Queue empty in {ctx.guild.name}")
+
+    async def _log_and_announce_next(self, ctx, song_info, player):
+        """Async logging and announcement for next song"""
+        logger.info(f"Playing next song: {song_info['title']} in {ctx.guild.name}")
+        log_music(ctx, "play_next", song_info)
+        
+        # Send now playing message
+        embed = discord.Embed(
+            title="🎵 Now Playing",
+            description=f"[{player.title}]({song_info['url']})",
+            color=discord.Color.green()
+        )
+        if player.thumbnail:
+            embed.set_thumbnail(url=player.thumbnail)
+        embed.add_field(name="Duration", value=self.format_duration(player.duration), inline=True)
+        embed.add_field(name="Requested by", value=song_info['requester'].mention, inline=True)
+        
+        await ctx.send(embed=embed)
+
+    async def _log_play_error(self, ctx, song_info, error):
+        """Async logging for play errors"""
+        logger.error(f"Error playing next song: {error}")
+        log_music(ctx, "play_next_error", song_info, error=error)
     
     def format_duration(self, duration):
         """Format duration from seconds to MM:SS"""
@@ -125,7 +139,6 @@ class Music(commands.Cog):
     
     async def search_youtube(self, query):
         """Search YouTube and return the first result"""
-        logger.debug(f"Searching YouTube for: {query}")
         loop = asyncio.get_event_loop()
         
         # Check if it's a URL
@@ -133,14 +146,7 @@ class Music(commands.Cog):
             r'(https?://)?(www\.)?(youtube\.com/(watch\?v=|embed/|v/)|youtu\.be/|youtube\.com/playlist\?list=)'
         )
         
-        if url_pattern.match(query):
-            # It's a URL, use it directly
-            search_query = query
-            logger.debug("Query is a URL")
-        else:
-            # It's a search query
-            search_query = f"ytsearch:{query}"
-            logger.debug("Query is a search term")
+        search_query = query if url_pattern.match(query) else f"ytsearch:{query}"
         
         try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(search_query, download=False))
@@ -155,7 +161,8 @@ class Music(commands.Cog):
                     'thumbnail': video.get('thumbnail'),
                     'channel': video.get('channel', 'Unknown')
                 }
-                logger.info(f"Found video: {result['title']} by {result['channel']}")
+                # Log success asynchronously
+                asyncio.create_task(self._log_search_success(result))
                 return result
             elif 'title' in data:
                 # Direct URL result
@@ -166,11 +173,19 @@ class Music(commands.Cog):
                     'thumbnail': data.get('thumbnail'),
                     'channel': data.get('channel', 'Unknown')
                 }
-                logger.info(f"Direct URL result: {result['title']}")
+                asyncio.create_task(self._log_search_success(result))
                 return result
         except Exception as e:
-            logger.error(f"Search error for query '{query}': {e}")
+            asyncio.create_task(self._log_search_error(query, str(e)))
             return None
+
+    async def _log_search_success(self, result):
+        """Async logging for successful search"""
+        logger.info(f"Found video: {result['title']} by {result['channel']}")
+
+    async def _log_search_error(self, query, error):
+        """Async logging for search errors"""
+        logger.error(f"Search error for query '{query}': {error}")
     
     @commands.command(name='play', aliases=['p'], help='Play music from YouTube')
     async def play(self, ctx, *, query: str):
@@ -178,28 +193,26 @@ class Music(commands.Cog):
         Play music from YouTube
         Usage: !play <song name or YouTube URL>
         """
-        logger.info(f"Play command used by {ctx.author} in {ctx.guild}: '{query}'")
+        # Log command usage asynchronously
+        asyncio.create_task(self._log_play_command(ctx, query))
         
         # Check if user is in a voice channel
         if not ctx.author.voice:
-            logger.warning(f"User {ctx.author} not in voice channel")
             await ctx.send("❌ You need to be in a voice channel to use this command!")
             return
         
         # Connect to voice channel if not already connected
         if not ctx.voice_client:
             channel = ctx.author.voice.channel
-            logger.info(f"Connecting to voice channel: {channel.name}")
             await channel.connect()
-            log_music(ctx, "voice_connect", {"channel": channel.name})
+            asyncio.create_task(self._log_voice_connect(ctx, channel.name))
         
         # Search for the song
         async with ctx.typing():
             result = await self.search_youtube(query)
             
             if not result:
-                logger.warning(f"No results found for query: '{query}'")
-                log_music(ctx, "search_no_results", {"query": query})
+                asyncio.create_task(self._log_no_results(ctx, query))
                 await ctx.send("❌ No results found!")
                 return
             
@@ -210,8 +223,7 @@ class Music(commands.Cog):
             if ctx.voice_client.is_playing():
                 queue = self.get_queue(ctx)
                 queue.append(result)
-                logger.info(f"Added to queue: {result['title']} (position {len(queue)})")
-                log_music(ctx, "add_to_queue", result)
+                asyncio.create_task(self._log_add_to_queue(ctx, result, len(queue)))
                 
                 embed = discord.Embed(
                     title="📋 Added to Queue",
@@ -226,40 +238,67 @@ class Music(commands.Cog):
                 
                 await ctx.send(embed=embed)
             else:
-                # Play immediately
+                # Play immediately to minimize URL expiration
                 try:
-                    logger.info(f"Playing immediately: {result['title']}")
                     player = await YTDLSource.from_url(result['url'], loop=self.bot.loop, stream=True)
                     ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(
                         self.play_next(ctx), self.bot.loop
                     ))
                     
-                    log_music(ctx, "play_now", result)
+                    # Log and send embed after playback starts
+                    asyncio.create_task(self._log_and_announce_play(ctx, result, player))
                     
-                    embed = discord.Embed(
-                        title="🎵 Now Playing",
-                        description=f"[{player.title}]({result['url']})",
-                        color=discord.Color.green()
-                    )
-                    if player.thumbnail:
-                        embed.set_thumbnail(url=player.thumbnail)
-                    embed.add_field(name="Duration", value=self.format_duration(player.duration), inline=True)
-                    embed.add_field(name="Requested by", value=ctx.author.mention, inline=True)
-                    
-                    await ctx.send(embed=embed)
                 except Exception as e:
-                    logger.error(f"Error playing song immediately: {e}")
-                    log_music(ctx, "play_error", result, error=e)
+                    asyncio.create_task(self._log_play_immediate_error(ctx, result, str(e)))
                     await ctx.send(f"❌ Error playing song: {str(e)}")
+
+    async def _log_play_command(self, ctx, query):
+        """Async logging for play command"""
+        logger.info(f"Play command used by {ctx.author} in {ctx.guild}: '{query}'")
+
+    async def _log_voice_connect(self, ctx, channel_name):
+        """Async logging for voice connection"""
+        logger.info(f"Connecting to voice channel: {channel_name}")
+        log_music(ctx, "voice_connect", {"channel": channel_name})
+
+    async def _log_no_results(self, ctx, query):
+        """Async logging for no search results"""
+        logger.warning(f"No results found for query: '{query}'")
+        log_music(ctx, "search_no_results", {"query": query})
+
+    async def _log_add_to_queue(self, ctx, result, queue_position):
+        """Async logging for adding to queue"""
+        logger.info(f"Added to queue: {result['title']} (position {queue_position})")
+        log_music(ctx, "add_to_queue", result)
+
+    async def _log_and_announce_play(self, ctx, result, player):
+        """Async logging and announcement for immediate play"""
+        logger.info(f"Playing immediately: {result['title']}")
+        log_music(ctx, "play_now", result)
+        
+        embed = discord.Embed(
+            title="🎵 Now Playing",
+            description=f"[{player.title}]({result['url']})",
+            color=discord.Color.green()
+        )
+        if player.thumbnail:
+            embed.set_thumbnail(url=player.thumbnail)
+        embed.add_field(name="Duration", value=self.format_duration(player.duration), inline=True)
+        embed.add_field(name="Requested by", value=ctx.author.mention, inline=True)
+        
+        await ctx.send(embed=embed)
+
+    async def _log_play_immediate_error(self, ctx, result, error):
+        """Async logging for immediate play errors"""
+        logger.error(f"Error playing song immediately: {error}")
+        log_music(ctx, "play_error", result, error=error)
 
     @commands.command(name='pause', help='Pause the current song')
     async def pause(self, ctx):
         """Pause the current song"""
-        logger.info(f"Pause command used by {ctx.author} in {ctx.guild}")
-        
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.pause()
-            log_music(ctx, "pause")
+            asyncio.create_task(self._log_simple_command(ctx, "pause"))
             await ctx.send("⏸️ Music paused!")
         else:
             await ctx.send("❌ No music is playing!")
@@ -267,11 +306,9 @@ class Music(commands.Cog):
     @commands.command(name='resume', help='Resume the paused song')
     async def resume(self, ctx):
         """Resume the paused song"""
-        logger.info(f"Resume command used by {ctx.author} in {ctx.guild}")
-        
         if ctx.voice_client and ctx.voice_client.is_paused():
             ctx.voice_client.resume()
-            log_music(ctx, "resume")
+            asyncio.create_task(self._log_simple_command(ctx, "resume"))
             await ctx.send("▶️ Music resumed!")
         else:
             await ctx.send("❌ Music is not paused!")
@@ -279,11 +316,9 @@ class Music(commands.Cog):
     @commands.command(name='skip', aliases=['s'], help='Skip the current song')
     async def skip(self, ctx):
         """Skip the current song"""
-        logger.info(f"Skip command used by {ctx.author} in {ctx.guild}")
-        
         if ctx.voice_client and ctx.voice_client.is_playing():
             ctx.voice_client.stop()
-            log_music(ctx, "skip")
+            asyncio.create_task(self._log_simple_command(ctx, "skip"))
             await ctx.send("⏭️ Song skipped!")
         else:
             await ctx.send("❌ No music is playing!")
@@ -291,25 +326,33 @@ class Music(commands.Cog):
     @commands.command(name='stop', help='Stop music and clear the queue')
     async def stop(self, ctx):
         """Stop music and clear the queue"""
-        logger.info(f"Stop command used by {ctx.author} in {ctx.guild}")
-        
         if ctx.voice_client:
             # Clear the queue
+            queue_length = 0
             if ctx.guild.id in self.music_queues:
                 queue_length = len(self.music_queues[ctx.guild.id])
                 self.music_queues[ctx.guild.id] = []
-                logger.info(f"Cleared queue of {queue_length} songs")
             
             ctx.voice_client.stop()
-            log_music(ctx, "stop", {"queue_cleared": queue_length if 'queue_length' in locals() else 0})
+            asyncio.create_task(self._log_stop_command(ctx, queue_length))
             await ctx.send("⏹️ Music stopped and queue cleared!")
         else:
             await ctx.send("❌ No music is playing!")
 
+    async def _log_simple_command(self, ctx, action):
+        """Async logging for simple commands"""
+        logger.info(f"{action.title()} command used by {ctx.author} in {ctx.guild}")
+        log_music(ctx, action)
+
+    async def _log_stop_command(self, ctx, queue_length):
+        """Async logging for stop command"""
+        logger.info(f"Stop command used by {ctx.author} in {ctx.guild}")
+        logger.info(f"Cleared queue of {queue_length} songs")
+        log_music(ctx, "stop", {"queue_cleared": queue_length})
+
     @commands.command(name='queue', aliases=['q'], help='Show the music queue')
     async def queue(self, ctx):
         """Show the music queue"""
-        logger.debug(f"Queue command used by {ctx.author} in {ctx.guild}")
         queue = self.get_queue(ctx)
         
         if len(queue) == 0:
@@ -357,8 +400,6 @@ class Music(commands.Cog):
     @commands.command(name='volume', help='Change the volume (0-100)')
     async def volume(self, ctx, volume: int):
         """Change the player volume"""
-        logger.info(f"Volume command used by {ctx.author} in {ctx.guild}: {volume}")
-        
         if not ctx.voice_client:
             await ctx.send("❌ Not connected to a voice channel!")
             return
@@ -368,32 +409,39 @@ class Music(commands.Cog):
             return
         
         ctx.voice_client.source.volume = volume / 100
-        log_music(ctx, "volume_change", {"volume": volume})
+        asyncio.create_task(self._log_volume_change(ctx, volume))
         await ctx.send(f"🔊 Volume set to {volume}%")
+
+    async def _log_volume_change(self, ctx, volume):
+        """Async logging for volume changes"""
+        logger.info(f"Volume command used by {ctx.author} in {ctx.guild}: {volume}")
+        log_music(ctx, "volume_change", {"volume": volume})
 
     @commands.command(name='leave', aliases=['disconnect', 'dc'], help='Disconnect the bot from voice')
     async def leave(self, ctx):
         """Disconnect from voice channel"""
-        logger.info(f"Leave command used by {ctx.author} in {ctx.guild}")
-        
         if ctx.voice_client:
             # Clear the queue
+            queue_length = 0
             if ctx.guild.id in self.music_queues:
                 queue_length = len(self.music_queues[ctx.guild.id])
                 self.music_queues[ctx.guild.id] = []
-                logger.info(f"Cleared queue of {queue_length} songs before leaving")
             
             await ctx.voice_client.disconnect()
-            log_music(ctx, "voice_disconnect")
+            asyncio.create_task(self._log_leave_command(ctx, queue_length))
             await ctx.send("👋 Disconnected from voice channel!")
         else:
             await ctx.send("❌ I'm not in a voice channel!")
 
+    async def _log_leave_command(self, ctx, queue_length):
+        """Async logging for leave command"""
+        logger.info(f"Leave command used by {ctx.author} in {ctx.guild}")
+        logger.info(f"Cleared queue of {queue_length} songs before leaving")
+        log_music(ctx, "voice_disconnect")
+
     @commands.command(name='join', help='Join your voice channel')
     async def join(self, ctx):
         """Join the user's voice channel"""
-        logger.info(f"Join command used by {ctx.author} in {ctx.guild}")
-        
         if not ctx.author.voice:
             await ctx.send("❌ You need to be in a voice channel!")
             return
@@ -402,14 +450,22 @@ class Music(commands.Cog):
         
         if ctx.voice_client:
             await ctx.voice_client.move_to(channel)
-            logger.info(f"Moved to voice channel: {channel.name}")
-            log_music(ctx, "voice_move", {"channel": channel.name})
+            asyncio.create_task(self._log_voice_move(ctx, channel.name))
             await ctx.send(f"📍 Moved to {channel.name}")
         else:
             await channel.connect()
-            logger.info(f"Connected to voice channel: {channel.name}")
-            log_music(ctx, "voice_connect", {"channel": channel.name})
+            asyncio.create_task(self._log_voice_join(ctx, channel.name))
             await ctx.send(f"🔊 Connected to {channel.name}")
+
+    async def _log_voice_move(self, ctx, channel_name):
+        """Async logging for voice channel move"""
+        logger.info(f"Moved to voice channel: {channel_name}")
+        log_music(ctx, "voice_move", {"channel": channel_name})
+
+    async def _log_voice_join(self, ctx, channel_name):
+        """Async logging for voice channel join"""
+        logger.info(f"Connected to voice channel: {channel_name}")
+        log_music(ctx, "voice_connect", {"channel": channel_name})
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -420,22 +476,31 @@ class Music(commands.Cog):
         voice_client = discord.utils.get(self.bot.voice_clients, guild=member.guild)
         
         if voice_client and voice_client.channel:
-            # Log voice state changes
-            log_voice(member, before, after, "voice_state_update")
+            # Log voice state changes asynchronously
+            asyncio.create_task(self._log_voice_state_update(member, before, after))
             
             # Check if bot is alone in voice channel
             if len(voice_client.channel.members) == 1:
-                logger.info(f"Bot is alone in {voice_client.channel.name}, waiting 30 seconds...")
-                await asyncio.sleep(30)  # Wait 30 seconds
-                
-                # Check again
-                if voice_client.is_connected() and len(voice_client.channel.members) == 1:
-                    logger.info(f"Auto-leaving {voice_client.channel.name} due to inactivity")
-                    # Clear queue
-                    if member.guild.id in self.music_queues:
-                        self.music_queues[member.guild.id] = []
-                    
-                    await voice_client.disconnect()
+                asyncio.create_task(self._handle_alone_in_channel(voice_client, member.guild))
+
+    async def _log_voice_state_update(self, member, before, after):
+        """Async logging for voice state updates"""
+        log_voice(member, before, after, "voice_state_update")
+
+    async def _handle_alone_in_channel(self, voice_client, guild):
+        """Handle being alone in voice channel"""
+        channel_name = voice_client.channel.name
+        logger.info(f"Bot is alone in {channel_name}, waiting 30 seconds...")
+        await asyncio.sleep(30)  # Wait 30 seconds
+        
+        # Check again
+        if voice_client.is_connected() and len(voice_client.channel.members) == 1:
+            logger.info(f"Auto-leaving {channel_name} due to inactivity")
+            # Clear queue
+            if guild.id in self.music_queues:
+                self.music_queues[guild.id] = []
+            
+            await voice_client.disconnect()
 
 # Setup function
 async def setup(bot):

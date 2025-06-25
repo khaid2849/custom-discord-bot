@@ -1,20 +1,11 @@
-#!/usr/bin/env python3
-"""
-Simple log viewer for Discord Bot
-Usage: python log_viewer.py [log_type] [lines]
-"""
-
 import os
-import sys
 import json
-from datetime import datetime
 import argparse
 
 
 def format_log_entry(line):
     """Format log entry for better readability"""
     try:
-        # Try to parse JSON content
         if '{' in line and '}' in line:
             parts = line.split(' | ')
             if len(parts) >= 4:
@@ -22,7 +13,6 @@ def format_log_entry(line):
                 level = parts[1]
                 module = parts[2]
                 
-                # Extract JSON part
                 json_start = line.find('{')
                 if json_start != -1:
                     json_data = json.loads(line[json_start:])
@@ -58,13 +48,11 @@ def watch_file(filename):
     try:
         print(f"Watching {filename} for new entries... (Ctrl+C to stop)")
         
-        # Get initial file size
         if not os.path.exists(filename):
             print(f"File {filename} doesn't exist yet. Waiting...")
             return
             
         with open(filename, 'r') as f:
-            # Move to end of file
             f.seek(0, 2)
             
             while True:
@@ -125,7 +113,6 @@ def main():
         show_stats()
         return
     
-    # Create logs directory if it doesn't exist
     if not os.path.exists('logs'):
         print("Logs directory doesn't exist. Run the bot first to generate logs.")
         return

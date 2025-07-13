@@ -64,7 +64,8 @@ class BotLogger:
         file_handler = logging.handlers.RotatingFileHandler(
             'logs/bot.log',
             maxBytes=10*1024*1024,
-            backupCount=5
+            backupCount=5,
+            encoding='utf-8'
         )
         file_handler.setLevel(logging.DEBUG)
         file_format = logging.Formatter(
@@ -76,7 +77,8 @@ class BotLogger:
         error_handler = logging.handlers.RotatingFileHandler(
             'logs/errors.log',
             maxBytes=5*1024*1024,
-            backupCount=3
+            backupCount=3,
+            encoding='utf-8'
         )
         error_handler.setLevel(logging.ERROR)
         error_handler.setFormatter(file_format)
@@ -84,7 +86,8 @@ class BotLogger:
         music_handler = logging.handlers.RotatingFileHandler(
             'logs/music.log',
             maxBytes=5*1024*1024,
-            backupCount=3
+            backupCount=3,
+            encoding='utf-8'
         )
         music_handler.setLevel(logging.DEBUG)
         music_handler.setFormatter(file_format)
@@ -120,7 +123,7 @@ class BotLogger:
             'channel': str(ctx.channel),
             'channel_id': ctx.channel.id,
             'success': success,
-            'timestamp': datetime.now(datetime.UTC).isoformat()
+            'timestamp': datetime.utcnow()
         }
         
         if error:
@@ -140,7 +143,7 @@ class BotLogger:
             'guild': str(ctx.guild),
             'guild_id': ctx.guild.id,
             'voice_channel': str(ctx.author.voice.channel) if ctx.author.voice else None,
-            'timestamp': datetime.now(datetime.UTC).isoformat()
+            'timestamp': datetime.utcnow()
         }
         
         if song_info:
@@ -169,7 +172,7 @@ class BotLogger:
             'guild_id': member.guild.id,
             'before_channel': str(before.channel) if before.channel else None,
             'after_channel': str(after.channel) if after.channel else None,
-            'timestamp': datetime.now(datetime.UTC).isoformat()
+            'timestamp': datetime.utcnow()
         }
         
         logger.info(f"Voice event: {json.dumps(log_data, separators=(',', ':'))}")
@@ -180,7 +183,7 @@ class BotLogger:
         
         log_data = {
             'event_type': event_type,
-            'timestamp': datetime.now(datetime.UTC).isoformat()
+            'timestamp': datetime.utcnow()
         }
         
         if details:

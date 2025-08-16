@@ -123,7 +123,7 @@ class BotLogger:
             'channel': str(ctx.channel),
             'channel_id': ctx.channel.id,
             'success': success,
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.utcnow().isoformat()  
         }
         
         if error:
@@ -143,7 +143,7 @@ class BotLogger:
             'guild': str(ctx.guild),
             'guild_id': ctx.guild.id,
             'voice_channel': str(ctx.author.voice.channel) if ctx.author.voice else None,
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.utcnow().isoformat()
         }
         
         if song_info:
@@ -172,7 +172,7 @@ class BotLogger:
             'guild_id': member.guild.id,
             'before_channel': str(before.channel) if before.channel else None,
             'after_channel': str(after.channel) if after.channel else None,
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.utcnow().isoformat()
         }
         
         logger.info(f"Voice event: {json.dumps(log_data, separators=(',', ':'))}")
@@ -183,7 +183,7 @@ class BotLogger:
         
         log_data = {
             'event_type': event_type,
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.utcnow().isoformat()
         }
         
         if details:

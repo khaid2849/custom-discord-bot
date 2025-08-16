@@ -1,6 +1,8 @@
 import discord
 import os
 import asyncio
+import subprocess
+import sys
 
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -227,8 +229,34 @@ async def logs(ctx, lines: int = 10):
     except Exception as e:
         await ctx.send(f"❌ Error reading logs: {e}")
 
+def upgrade_yt_dlp():
+    """Upgrade yt-dlp to the latest version"""
+    try:
+        logger.info("Upgrading yt-dlp...")
+        print("🔄 Upgrading yt-dlp to latest version...")
+        
+        result = subprocess.run([
+            sys.executable, "-m", "pip", "install", "yt-dlp", "--upgrade"
+        ], capture_output=True, text=True, check=True)
+        
+        logger.info("yt-dlp upgrade completed successfully")
+        print("✅ yt-dlp upgraded successfully")
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to upgrade yt-dlp: {e}")
+        logger.error(f"Error output: {e.stderr}")
+        print(f"❌ Failed to upgrade yt-dlp: {e}")
+        print("Bot will continue running with current yt-dlp version...")
+    except Exception as e:
+        logger.error(f"Unexpected error during yt-dlp upgrade: {e}")
+        print(f"❌ Unexpected error during yt-dlp upgrade: {e}")
+        print("Bot will continue running...")
+
 async def main():
     """Main function to run the bot"""
+    # Upgrade yt-dlp before starting the bot
+    upgrade_yt_dlp()
+    
     logger.info("Starting Discord bot...")
     log_bot("bot_starting")
     

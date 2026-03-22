@@ -193,64 +193,87 @@ class Music(commands.Cog):
         Play music from YouTube
         Usage: !play <song name or YouTube URL>
         """
-        # Log command usage asynchronously
-        asyncio.create_task(self._log_play_command(ctx, query))
-        
+        logger.debug(f"[play] Command received: query='{query}' user={ctx.author} guild={ctx.guild}")
+
         # Check if user is in a voice channel
+        logger.debug(f"[play] Checking if user is in voice channel: {ctx.author.voice}")
         if not ctx.author.voice:
             await ctx.send("❌ You need to be in a voice channel to use this command!")
             return
-        
-        # Connect to voice channel if not already connected
-        if not ctx.voice_client:
-            channel = ctx.author.voice.channel
-            await channel.connect()
-            asyncio.create_task(self._log_voice_connect(ctx, channel.name))
-        
-        # Search for the song
+        logger.debug(f"[play] User is in voice channel: {ctx.author.voice.channel}")
+
+        # Search for the song FIRST before connecting to voice
+        logger.debug(f"[play] Starting YouTube search for: '{query}'")
         async with ctx.typing():
             result = await self.search_youtube(query)
-            
+            logger.debug(f"[play] Search result: {result}")
+
             if not result:
                 asyncio.create_task(self._log_no_results(ctx, query))
                 await ctx.send("❌ No results found!")
                 return
-            
-            # Add requester info
+
             result['requester'] = ctx.author
-            
-            # If something is playing, add to queue
-            if ctx.voice_client.is_playing():
-                queue = self.get_queue(ctx)
-                queue.append(result)
-                asyncio.create_task(self._log_add_to_queue(ctx, result, len(queue)))
-                
-                embed = discord.Embed(
-                    title="📋 Added to Queue",
-                    description=f"[{result['title']}]({result['url']})",
-                    color=discord.Color.blue()
-                )
-                if result['thumbnail']:
-                    embed.set_thumbnail(url=result['thumbnail'])
-                embed.add_field(name="Duration", value=self.format_duration(result['duration']), inline=True)
-                embed.add_field(name="Position", value=len(queue), inline=True)
-                embed.set_footer(text=f"Requested by {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
-                
-                await ctx.send(embed=embed)
-            else:
-                # Play immediately to minimize URL expiration
-                try:
-                    player = await YTDLSource.from_url(result['url'], loop=self.bot.loop, stream=True)
-                    ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(
-                        self.play_next(ctx), self.bot.loop
-                    ))
-                    
-                    # Log and send embed after playback starts
-                    asyncio.create_task(self._log_and_announce_play(ctx, result, player))
-                    
-                except Exception as e:
-                    asyncio.create_task(self._log_play_immediate_error(ctx, result, str(e)))
-                    await ctx.send(f"❌ Error playing song: {str(e)}")
+            logger.debug(f"[play] Search done: title='{result['title']}' url='{result['url']}'")
+
+        # Connect to voice AFTER search to minimize time between connect and play
+        logger.debug(f"[play] Current voice_client: {ctx.voice_client}")
+        voice_client = ctx.voice_client
+        if not voice_client:
+            channel = ctx.author.voice.channel
+            logger.debug(f"[play] Connecting to voice channel: {channel}")
+            try:
+                voice_client = await channel.connect()
+                logger.debug(f"[play] Connected. voice_client={voice_client} is_connected={voice_client.is_connected()}")
+                asyncio.create_task(self._log_voice_connect(ctx, channel.name))
+            except Exception as e:
+                logger.error(f"[play] Failed to connect to voice channel: {type(e).__name__}: {e}")
+                await ctx.send(f"❌ Could not connect to voice channel: {str(e)}")
+                return
+        else:
+            logger.debug(f"[play] Already in voice channel: {voice_client.channel} is_connected={voice_client.is_connected()}")
+
+        # If something is playing, add to queue
+        logger.debug(f"[play] is_playing={voice_client.is_playing()} is_connected={voice_client.is_connected()}")
+        if voice_client.is_playing():
+            queue = self.get_queue(ctx)
+            queue.append(result)
+            asyncio.create_task(self._log_add_to_queue(ctx, result, len(queue)))
+
+            embed = discord.Embed(
+                title="📋 Added to Queue",
+                description=f"[{result['title']}]({result['url']})",
+                color=discord.Color.blue()
+            )
+            if result['thumbnail']:
+                embed.set_thumbnail(url=result['thumbnail'])
+            embed.add_field(name="Duration", value=self.format_duration(result['duration']), inline=True)
+            embed.add_field(name="Position", value=len(queue), inline=True)
+            embed.set_footer(text=f"Requested by {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
+
+            await ctx.send(embed=embed)
+        else:
+            # Fetch stream URL and play immediately
+            logger.debug(f"[play] Fetching stream URL from: {result['url']}")
+            try:
+                player = await YTDLSource.from_url(result['url'], loop=self.bot.loop, stream=True)
+                logger.debug(f"[play] Stream ready: title='{player.title}'")
+                logger.debug(f"[play] voice_client state before play: is_connected={voice_client.is_connected()} is_playing={voice_client.is_playing()}")
+                if not voice_client.is_connected():
+                    logger.error("[play] Voice client disconnected before play() was called")
+                    await ctx.send("❌ Voice connection dropped. Please try again.")
+                    return
+                voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(
+                    self.play_next(ctx), self.bot.loop
+                ))
+                logger.debug(f"[play] play() called successfully")
+
+                asyncio.create_task(self._log_and_announce_play(ctx, result, player))
+
+            except Exception as e:
+                logger.error(f"[play] Exception during playback: {type(e).__name__}: {e}", exc_info=True)
+                asyncio.create_task(self._log_play_immediate_error(ctx, result, str(e)))
+                await ctx.send(f"❌ Error playing song: {str(e)}")
 
     async def _log_play_command(self, ctx, query):
         """Async logging for play command"""

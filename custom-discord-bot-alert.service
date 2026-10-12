@@ -1,6 +1,0 @@
-[Unit]
-Description=Alert + one-shot recovery attempt for custom-discord-bot.service failures
-
-[Service]
-Type=oneshot
-ExecStart=/path/to/custom-discord-bot/scripts/on_failure_alert.sh

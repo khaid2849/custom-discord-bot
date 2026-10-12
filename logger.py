@@ -40,7 +40,7 @@ class AsyncLogHandler(logging.Handler):
 class BotLogger:
     """Custom logger for Discord bot with non-blocking structured logging"""
     
-    def __init__(self, name="DiscordBot", log_level=logging.INFO):
+    def __init__(self, name="DiscordBot", log_level=logging.DEBUG):
         self.logger = logging.getLogger(name)
         self.logger.setLevel(log_level)
         

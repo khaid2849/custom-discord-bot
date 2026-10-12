@@ -1,6 +1,0 @@
-[Unit]
-Description=Daily dependency freshness check + safety-net restart for custom-discord-bot
-
-[Service]
-Type=oneshot
-ExecStart=/path/to/custom-discord-bot/scripts/dependency_healthcheck.sh

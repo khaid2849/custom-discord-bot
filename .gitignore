@@ -27,6 +27,7 @@ wheels/
 .env
 .env.local
 .env.*.local
+!.env.example
 
 # IDE
 .vscode/
@@ -51,7 +52,17 @@ config.json
 *.sqlite
 data/
 logs/
+state/
+
+# Audio files yt-dlp may download when not streaming
+*.webm
+*.m4a
+*.mp3
+*.opus
 
 # Backup files
 *.bak
 *.backup
+
+# Local Claude Code instructions
+CLAUDE.md

@@ -1,0 +1,25 @@
+[Unit]
+Description=Custom Discord Bot Service
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=6
+OnFailure=custom-discord-bot-alert.service
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/custom-discord-bot
+Environment="PATH=/path/to/custom-discord-bot/venv/bin:/usr/bin:/usr/local/bin"
+ExecStart=/path/to/custom-discord-bot/venv/bin/python3 /path/to/custom-discord-bot/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=custom-discord-bot
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

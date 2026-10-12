@@ -1,29 +1,45 @@
 # Discord Music Bot
 
-A feature-rich Discord bot with music playback capabilities and comprehensive logging system.
+A self-hosted Discord bot that plays music from YouTube, shows song lyrics, and keeps detailed logs of everything it does.
 
 ## Features
 
-- 🎵 **Music Playback**: Play music from YouTube with queue management
-- 📋 **Queue System**: Add songs to queue, skip, pause, resume
-- 🔊 **Voice Channel Management**: Auto-join/leave, volume control
+- 🎵 **Music Playback**: Play music from YouTube by name or URL, with per-server queues
+- 📋 **Queue System**: Add songs to the queue, skip, pause, resume, show what's playing
+- 🎤 **Lyrics**: Look up lyrics for the current song (or any song) via [LRCLIB](https://lrclib.net), no API key needed
+- 🔊 **Voice Channel Management**: Joins your channel on demand, leaves automatically when left alone
 - 📊 **Comprehensive Logging**: Track all bot activities and user interactions
 - ⚙️ **Slash Commands**: Modern Discord slash command support
-- 🛡️ **Error Handling**: Robust error handling and recovery
+- 🛡️ **Self-healing service**: Optional systemd setup with auto-restart, crash alerts and daily dependency updates ([SERVICE_SETUP.md](SERVICE_SETUP.md))
+
+## Requirements
+
+- Python 3.10+
+- [FFmpeg](https://ffmpeg.org/) available in `PATH` (Ubuntu/Debian: `sudo apt install ffmpeg`, macOS: `brew install ffmpeg`)
+- A Discord bot application (see below)
+
+## Discord Bot Setup
+
+1. Create an application at the [Discord Developer Portal](https://discord.com/developers/applications).
+2. In **Bot**, click **Reset Token** and copy the token (you'll put it in `.env`).
+3. In **Bot > Privileged Gateway Intents**, enable **Message Content Intent** (needed for `!` prefix commands).
+4. In **OAuth2 > URL Generator**, select the scopes `bot` and `applications.commands`, then the permissions:
+   Send Messages, Embed Links, Read Message History, Add Reactions, Manage Messages (for `!clear`), Connect, Speak.
+   Open the generated URL to invite the bot to your server.
 
 ## Quick Start
 
 1. **Clone the repository**
 
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/khaid2849/custom-discord-bot.git
    cd custom-discord-bot
    ```
 
 2. **Create virtual environment**
 
    ```bash
-   python -m venv venv
+   python3 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
@@ -34,7 +50,12 @@ A feature-rich Discord bot with music playback capabilities and comprehensive lo
    ```
 
 4. **Setup environment variables**
-   Create a `.env` file:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Then edit `.env` and set at least `DISCORD_TOKEN`:
 
    ```env
    DISCORD_TOKEN=your_bot_token_here
@@ -43,30 +64,44 @@ A feature-rich Discord bot with music playback capabilities and comprehensive lo
    ```
 
 5. **Run the bot**
+
    ```bash
    python bot.py
    ```
+
+   On startup the bot upgrades `yt-dlp` automatically, since YouTube changes often break older versions.
+
+To keep the bot running in the background on a Linux server (auto-start on boot, restart on crash), see [SERVICE_SETUP.md](SERVICE_SETUP.md).
 
 ## Commands
 
 ### Music Commands
 
-- `!play <song name or URL>` - Play music from YouTube
+- `!play <song name or URL>` (`!p`) - Play music from YouTube, or add it to the queue
 - `!pause` - Pause the current song
 - `!resume` - Resume the paused song
-- `!skip` - Skip the current song
-- `!stop` - Stop music and clear queue
-- `!queue` - Show the music queue
+- `!skip` (`!s`) - Skip the current song
+- `!stop` - Stop music and clear the queue
+- `!queue` (`!q`) - Show the music queue
+- `!nowplaying` (`!np`) - Show the current song
 - `!volume <0-100>` - Change volume
 - `!join` - Join your voice channel
-- `!leave` - Leave voice channel
+- `!leave` (`!dc`) - Leave the voice channel
+- `!lyrics [song name]` (`!ly`) - Show lyrics of the current song, or search for a given song
 
 ### General Commands
 
 - `!ping` - Check bot latency
 - `!serverinfo` - Show server information
+- `!userinfo [@member]` - Show information about a user
+- `!avatar [@member]` - Show a user's avatar
+- `!roll [NdM]` - Roll dice, e.g. `!roll 2d20`
+- `!choose <a> <b> ...` - Pick one of several options
+- `!poll <question>` - Create a yes/no poll
+- `!clear [amount]` - Delete recent messages (requires Manage Messages)
+- `!echo <message>` - Repeat a message
 - `!announce <message>` - Make an announcement
-- `!logs <lines>` - View recent logs (Admin only)
+- `!logs [lines]` - View recent logs (Administrator only)
 
 ### Slash Commands
 
@@ -83,6 +118,8 @@ The bot includes a comprehensive logging system that tracks:
 - `logs/bot.log` - Main bot activities and command usage
 - `logs/music.log` - Music-specific activities (play, queue, etc.)
 - `logs/errors.log` - Error messages and exceptions
+
+Logs include Discord usernames, user IDs and server names. They stay on your machine (`logs/` is git-ignored); keep that in mind before sharing them.
 
 ### Log Viewer
 
@@ -132,40 +169,37 @@ Logs are stored in structured JSON format for easy parsing:
 
 ## Configuration
 
-Edit `config.py` to customize bot settings:
+Settings are read from `.env` (see `.env.example`):
 
-```python
-class Config:
-    DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
-    COMMAND_PREFIX = os.getenv('COMMAND_PREFIX', '!')
-    BOT_STATUS = os.getenv('BOT_STATUS', 'Listening to commands!')
-    # ... other settings
-```
+| Variable | Required | Description |
+|---|---|---|
+| `DISCORD_TOKEN` | Yes | Bot token from the Developer Portal |
+| `COMMAND_PREFIX` | No | Prefix for text commands (default `!`) |
+| `BOT_STATUS` | No | Text shown as the bot's activity |
+| `HEALTH_WEBHOOK_URL` | No | Discord webhook for service alerts ([SERVICE_SETUP.md](SERVICE_SETUP.md)) |
+
+Other defaults (cooldowns, embed color, ...) live in `config.py`.
 
 ## Project Structure
 
 ```
 custom-discord-bot/
-├── bot.py              # Main bot file
-├── config.py           # Configuration settings
-├── logger.py           # Logging system
-├── log_viewer.py       # Log viewing utility
-├── requirements.txt    # Python dependencies
-├── cogs/              # Command modules
-│   ├── music.py       # Music functionality
-│   └── general.py     # General commands
-└── logs/              # Log files (created automatically)
-    ├── bot.log        # Main log
-    ├── music.log      # Music activities
-    └── errors.log     # Error log
+├── bot.py                 # Main bot file
+├── config.py              # Configuration settings
+├── logger.py              # Logging system
+├── log_viewer.py          # Log viewing utility
+├── requirements.txt       # Python dependencies
+├── .env.example           # Template for your .env
+├── cogs/                  # Command modules (every .py here is loaded automatically)
+│   ├── music.py           # Music functionality
+│   ├── lyrics.py          # Lyrics lookup
+│   └── general.py         # General commands
+├── scripts/               # Alert / healthcheck scripts used by the systemd units
+├── custom-discord-bot*.service, *.timer   # systemd unit templates
+└── logs/                  # Log files (created automatically)
 ```
 
-## Requirements
-
-- Python 3.8+
-- discord.py 2.3+
-- yt-dlp for YouTube downloads
-- FFmpeg for audio processing
+To add your own commands, create `cogs/<name>.py` with an `async def setup(bot)` function; it is picked up on the next start.
 
 ## Troubleshooting
 
@@ -173,19 +207,21 @@ custom-discord-bot/
 
 1. **Bot not responding to commands**
 
-   - Check if the bot has necessary permissions
+   - Make sure **Message Content Intent** is enabled in the Developer Portal
+   - Check if the bot has necessary permissions in the channel
    - Verify the command prefix in your `.env` file
    - Check logs: `python log_viewer.py errors`
 
 2. **Music not playing**
 
-   - Ensure FFmpeg is installed and in PATH
-   - Check voice channel permissions
+   - Ensure FFmpeg is installed and in `PATH`
+   - Check the bot has Connect and Speak permissions in the voice channel
+   - Update yt-dlp (`pip install -U yt-dlp`); YouTube changes frequently break older versions
    - View music logs: `python log_viewer.py music`
 
 3. **Import errors**
    - Verify all dependencies are installed: `pip install -r requirements.txt`
-   - Check Python version compatibility
+   - Check you are on Python 3.10 or newer
 
 ### Log Analysis
 
@@ -213,7 +249,7 @@ grep "play" logs/bot.log
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the MIT License - see [LICENSE](LICENSE).
 
 ## Support
 
@@ -224,4 +260,4 @@ python log_viewer.py --stats
 python log_viewer.py errors
 ```
 
-If issues persist, create an issue with relevant log entries.
+If issues persist, [open an issue](https://github.com/khaid2849/custom-discord-bot/issues) with relevant log entries (remove user IDs or other personal data first).

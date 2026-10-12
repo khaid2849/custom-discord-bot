@@ -4,6 +4,8 @@ import yt_dlp as youtube_dl
 import re
 
 from discord.ext import commands
+from yt_dlp.networking import Request
+from yt_dlp.networking.exceptions import HTTPError
 from logger import get_logger, log_music, log_voice
 
 ytdl_format_options = {
@@ -21,11 +23,27 @@ ytdl_format_options = {
 }
 
 ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    # -reconnect_on_http_error: YouTube CDN edges intermittently answer 403 on the
+    # first request; without this FFmpeg gives up immediately and playback is silent.
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_on_http_error 4xx,5xx -reconnect_delay_max 5',
     'options': '-vn',
 }
 
+# How many times to re-extract when the stream URL is rejected by the CDN
+STREAM_EXTRACT_ATTEMPTS = 3
+
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
+
+
+def _stream_url_ok(data):
+    """Fetch the first byte of the stream URL to check the CDN accepts it"""
+    request = Request(data['url'], headers={**data.get('http_headers', {}), 'Range': 'bytes=0-0'})
+    try:
+        ytdl.urlopen(request).close()
+        return True
+    except HTTPError as e:
+        logger.warning(f"Stream URL rejected with HTTP {e.status}: {data.get('title', 'Unknown')}")
+        return False
 
 logger = get_logger("Music")
 
@@ -45,10 +63,16 @@ class YTDLSource(discord.PCMVolumeTransformer):
         loop = loop or asyncio.get_event_loop()
         
         try:
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-            
-            if 'entries' in data:
-                data = data['entries'][0]
+            for attempt in range(1, STREAM_EXTRACT_ATTEMPTS + 1):
+                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+
+                if 'entries' in data:
+                    data = data['entries'][0]
+
+                # Each extraction yields a fresh signed URL, often on a different CDN node
+                if not stream or await loop.run_in_executor(None, _stream_url_ok, data):
+                    break
+                logger.warning(f"Re-extracting stream URL (attempt {attempt}/{STREAM_EXTRACT_ATTEMPTS})")
 
             filename = data['url'] if stream else ytdl.prepare_filename(data)
             
@@ -200,31 +224,24 @@ class Music(commands.Cog):
         if not ctx.author.voice:
             await ctx.send("❌ You need to be in a voice channel to use this command!")
             return
-        
-        # Connect to voice channel if not already connected
-        if not ctx.voice_client:
-            channel = ctx.author.voice.channel
-            await channel.connect()
-            asyncio.create_task(self._log_voice_connect(ctx, channel.name))
-        
-        # Search for the song
+
         async with ctx.typing():
+            # 1. Search
             result = await self.search_youtube(query)
-            
+
             if not result:
                 asyncio.create_task(self._log_no_results(ctx, query))
                 await ctx.send("❌ No results found!")
                 return
-            
-            # Add requester info
+
             result['requester'] = ctx.author
-            
-            # If something is playing, add to queue
-            if ctx.voice_client.is_playing():
+
+            # 2. If already playing, queue it — no need to prefetch
+            if ctx.voice_client and ctx.voice_client.is_playing():
                 queue = self.get_queue(ctx)
                 queue.append(result)
                 asyncio.create_task(self._log_add_to_queue(ctx, result, len(queue)))
-                
+
                 embed = discord.Embed(
                     title="📋 Added to Queue",
                     description=f"[{result['title']}]({result['url']})",
@@ -235,22 +252,62 @@ class Music(commands.Cog):
                 embed.add_field(name="Duration", value=self.format_duration(result['duration']), inline=True)
                 embed.add_field(name="Position", value=len(queue), inline=True)
                 embed.set_footer(text=f"Requested by {ctx.author.name}", icon_url=ctx.author.avatar.url if ctx.author.avatar else None)
-                
+
                 await ctx.send(embed=embed)
-            else:
-                # Play immediately to minimize URL expiration
-                try:
-                    player = await YTDLSource.from_url(result['url'], loop=self.bot.loop, stream=True)
-                    ctx.voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(
-                        self.play_next(ctx), self.bot.loop
-                    ))
-                    
-                    # Log and send embed after playback starts
-                    asyncio.create_task(self._log_and_announce_play(ctx, result, player))
-                    
-                except Exception as e:
-                    asyncio.create_task(self._log_play_immediate_error(ctx, result, str(e)))
-                    await ctx.send(f"❌ Error playing song: {str(e)}")
+                return
+
+            # 3. Not playing: prefetch the streaming source BEFORE joining voice.
+            #    from_url does a second yt-dlp extract_info (run_in_executor) which
+            #    yields the event loop — if the bot is already in voice at that point
+            #    the idle connection can drop, leaving ctx.voice_client = None.
+            try:
+                player = await YTDLSource.from_url(result['url'], loop=self.bot.loop, stream=True)
+            except Exception as e:
+                asyncio.create_task(self._log_play_immediate_error(ctx, result, str(e)))
+                await ctx.send(f"❌ Error loading song: {str(e)}")
+                return
+
+            # 4. Re-check: user may have left during the two async lookups above
+            if not ctx.author.voice:
+                await ctx.send("❌ You left the voice channel before the song was ready!")
+                return
+
+            # 5. Connect right before playing — use the return value directly so we
+            #    don't depend on ctx.voice_client being updated before we call play().
+            #    Also handle a zombie voice client (connected object but WS already closed).
+            try:
+                if ctx.voice_client and ctx.voice_client.is_connected():
+                    vc = ctx.voice_client
+                else:
+                    if ctx.voice_client:
+                        await ctx.voice_client.disconnect(force=True)
+                    vc = await ctx.author.voice.channel.connect()
+                    asyncio.create_task(self._log_voice_connect(ctx, vc.channel.name))
+            except Exception as e:
+                logger.error(f"Failed to connect to voice channel: {e}")
+                await ctx.send("❌ Failed to connect to voice channel. Please try again.")
+                return
+
+            # Guard: the background WS thread can drop _connected between connect()
+            # returning and play() being called, so verify before attempting playback.
+            if not vc.is_connected():
+                logger.error("Voice connection dropped immediately after connect()")
+                await ctx.send("❌ Voice connection dropped. Please try `!play` again.")
+                await vc.disconnect(force=True)
+                return
+
+            # 6. Play immediately
+            try:
+                vc.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(
+                    self.play_next(ctx), self.bot.loop
+                ))
+            except discord.ClientException as e:
+                logger.error(f"Playback failed after connect: {e}")
+                await ctx.send("❌ Voice connection dropped before playback. Please try `!play` again.")
+                await vc.disconnect(force=True)
+                return
+
+            asyncio.create_task(self._log_and_announce_play(ctx, result, player))
 
     async def _log_play_command(self, ctx, query):
         """Async logging for play command"""
